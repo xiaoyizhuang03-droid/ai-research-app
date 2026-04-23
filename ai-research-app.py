@@ -10,7 +10,6 @@ from supabase import create_client, Client
 st.set_page_config(page_title="AI 专家精研室", page_icon="🏢", layout="wide")
 
 # ==================== Supabase 配置 ====================
-# 从 Streamlit Secrets 读取凭据
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 
@@ -22,37 +21,12 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# ==================== 嵌入模型（用于语义搜索） ====================
+# ==================== 嵌入模型 ====================
 @st.cache_resource
 def load_embedding_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
 
 embedding_model = load_embedding_model()
-
-# ==================== 数据库表初始化（自动创建） ====================
-def ensure_table_exists():
-    """在 Supabase 中创建 research 表（如果不存在）"""
-    try:
-        # 尝试查询一条记录以测试表是否存在
-        supabase.table("research").select("id").limit(1).execute()
-    except Exception as e:
-        # 表不存在则手动创建（通过 SQL 执行，但 Supabase 客户端不直接支持 DDL）
-        # 替代方案：在 Supabase 控制台执行以下 SQL，或程序自动执行（需开启 pg_cron 等权限）
-        # 这里我们提示用户去控制台建表，以免复杂化
-        st.warning("⚠️ 请先在 Supabase 控制台执行以下 SQL 创建表，详见下方说明。")
-        st.code("""
-CREATE TABLE research (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ DEFAULT NOW(),
-    topic TEXT NOT NULL,
-    history_json JSONB NOT NULL,
-    final_verdict TEXT NOT NULL,
-    embedding VECTOR(384)  -- 需要安装 pgvector 扩展
-);
-        """)
-        st.stop()
-
-ensure_table_exists()
 
 # ==================== 专家角色设定 ====================
 MODEL_MAP = {
@@ -89,22 +63,20 @@ def stream_chat(client, model, messages):
         yield f"\n\n❌ 运行出错: {str(e)}"
 
 def save_to_supabase(topic, history, verdict):
-    """将研讨记录保存到 Supabase，同时生成向量嵌入（如果扩展已启用）"""
+    """保存到 Supabase"""
     timestamp = datetime.now().isoformat()
     try:
-        # 生成主题向量（仅当 pgvector 扩展已安装时有效）
         embedding = embedding_model.encode(topic).tolist()
         data = {
-            "timestamp": timestamp,
+            "created_at": timestamp,
             "topic": topic,
             "history_json": json.dumps(history, ensure_ascii=False),
             "final_verdict": verdict,
             "embedding": embedding
         }
     except Exception:
-        # 如果字段不存在或未安装向量扩展，则不写入向量
         data = {
-            "timestamp": timestamp,
+            "created_at": timestamp,
             "topic": topic,
             "history_json": json.dumps(history, ensure_ascii=False),
             "final_verdict": verdict
@@ -112,31 +84,27 @@ def save_to_supabase(topic, history, verdict):
     supabase.table("research").insert(data).execute()
 
 def search_by_keyword(keyword=None, limit=10):
-    """关键词搜索（使用 Supabase 的 ilike）"""
-    query = supabase.table("research").select("id, timestamp, topic").order("id", desc=True).limit(limit)
+    query = supabase.table("research").select("id, created_at, topic").order("id", desc=True).limit(limit)
     if keyword:
         query = query.ilike("topic", f"%{keyword}%")
     res = query.execute()
     return res.data if res.data else []
 
 def search_semantic(query_text, limit=10):
-    """语义搜索（需要 pgvector 扩展和 embedding 字段）"""
     if not query_text.strip():
         return []
     try:
         embedding = embedding_model.encode(query_text).tolist()
-        # 调用 Supabase 的 RPC 函数进行向量相似度搜索（需提前创建函数）
         res = supabase.rpc(
             "match_research",
             {"query_embedding": embedding, "match_threshold": 0.1, "match_count": limit}
         ).execute()
         return res.data if res.data else []
     except Exception as e:
-        st.warning(f"语义搜索暂不可用（请确保已安装 pgvector 并创建 match_research 函数）: {e}")
+        st.warning(f"语义搜索暂不可用: {e}")
         return []
 
 def load_research_by_id(research_id):
-    """根据 ID 加载完整记录"""
     res = supabase.table("research").select("history_json, final_verdict").eq("id", research_id).execute()
     if res.data and len(res.data) > 0:
         data = res.data[0]
@@ -165,7 +133,7 @@ with st.sidebar:
         st.session_state.final_verdict = ""
         st.rerun()
 
-    # ========== 历史记录搜索区域 ==========
+    # ========== 历史记录搜索 ==========
     st.divider()
     st.subheader("📚 往期研讨记录")
 
@@ -186,12 +154,11 @@ with st.sidebar:
     else:
         for item in records:
             if search_mode == "🔤 关键词":
-                r_id, r_time, r_topic = item["id"], item["timestamp"], item["topic"]
+                r_id, r_time, r_topic = item["id"], item["created_at"], item["topic"]
                 label = f"📜 {r_time[:10]} | {r_topic[:20]}{'…' if len(r_topic)>20 else ''}"
             else:
-                # 语义搜索结果包含相似度
                 r_id = item["id"]
-                r_time = item["timestamp"]
+                r_time = item["created_at"]
                 r_topic = item["topic"]
                 similarity = item.get("similarity", 0.0)
                 label = f"📜 {r_time[:10]} | {r_topic[:20]}… (相似度 {similarity:.2f})"
@@ -271,7 +238,7 @@ if st.session_state.is_running:
     st.session_state.is_running = False
     st.success("🎉 精研完成！结论已永久保存至云端。")
 
-# 显示历史信息（若非运行状态且有结论）
+# 显示历史信息
 elif st.session_state.final_verdict:
     st.divider()
     st.subheader("📌 本次研讨最终结论")
