@@ -30,12 +30,13 @@ embedding_model = load_embedding_model()
 
 # ==================== 专家角色设定 ====================
 MODEL_MAP = {
-    "gpt-4o": "openai/gpt-4o",
-    "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",
-    "Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
-    "Mistral-large": "mistral-ai/Mistral-large"
+    "GPT-4o": "gpt-4o",
+    "GPT-4o-mini": "gpt-4o-mini",
+    "Phi-4": "Phi-4-multimodal-instruct",
+    "DeepSeek-V3": "DeepSeek-V3-0324",
+    "Llama-3.3-70B": "Llama-3.3-70B-Instruct",
+    "Mistral-Large": "Mistral-Large-2411",
 }
-
 SYSTEM_PROMPTS = {
     "researcher": "你是一位严谨的研究员。请针对主题提供详尽、多维度的初始报告，要求逻辑清晰，尽可能挖掘深层原因。",
     "reviewer": "你是一位专业的评审专家。请审阅初始报告，指出其中的逻辑漏洞、遗漏的风险点或未考虑到的视角，并提供优化建议。",
