@@ -62,28 +62,27 @@ def stream_chat(client, model, messages):
                 yield chunk.choices[0].delta.content
     except Exception as e:
         yield f"\n\n❌ 运行出错: {str(e)}"
-
 def save_to_supabase(topic, history, verdict):
     """保存到 Supabase"""
     timestamp = datetime.now().isoformat()
+def save_to_supabase(topic, history, verdict):
+    """保存到 Supabase，修复字段类型问题"""
+    timestamp = datetime.now().isoformat()
+    data = {
+        "created_at": timestamp,
+        "topic": topic,
+        "history_json": history,          # 直接传字典，不要 json.dumps
+        "final_verdict": verdict,
+    }
+    
+    # 只有在向量扩展可用时才嵌入 embedding 字段
     try:
         embedding = embedding_model.encode(topic).tolist()
-        data = {
-            "created_at": timestamp,
-            "topic": topic,
-            "history_json": json.dumps(history, ensure_ascii=False),
-            "final_verdict": verdict,
-            "embedding": embedding
-        }
+        data["embedding"] = embedding
     except Exception:
-        data = {
-            "created_at": timestamp,
-            "topic": topic,
-            "history_json": json.dumps(history, ensure_ascii=False),
-            "final_verdict": verdict
-        }
-    supabase.table("research").insert(data).execute()
+        pass   # 如果生成失败，不添加 embedding 列
 
+    supabase.table("research").insert(data).execute()
 def search_by_keyword(keyword=None, limit=10):
     query = supabase.table("research").select("id, created_at, topic").order("id", desc=True).limit(limit)
     if keyword:
